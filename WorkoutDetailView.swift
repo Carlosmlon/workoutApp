@@ -24,7 +24,12 @@ struct WorkoutDetailView: View {
     @Environment(ActiveWorkoutSessionManager.self) private var activeSessionManager
     @Query private var preferences: [UserPreferences]
     @Bindable var workout: Workout
+
     @State private var presentedSheet: WorkoutTemplateSheet?
+
+    // Draft state so Cancel can revert changes instead of behaving like Save.
+    @State private var originalWorkoutName: String = ""
+    @State private var draftWorkoutName: String = ""
 
     private var preference: UserPreferences? {
         preferences.first
@@ -39,12 +44,17 @@ struct WorkoutDetailView: View {
     }
 
     private var isWorkoutNameValid: Bool {
-        !workout.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let name = isEditing ? draftWorkoutName : workout.name
+        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         List {
-            TemplateHeaderSection(workout: workout, isEditing: isEditing)
+            TemplateHeaderSection(
+                workout: workout,
+                isEditing: isEditing,
+                draftWorkoutName: $draftWorkoutName
+            )
 
             Section("Exercises") {
                 if workout.exercises.isEmpty {
@@ -71,29 +81,24 @@ struct WorkoutDetailView: View {
                 }
             }
         }
-        .navigationTitle(workout.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(isEditing)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 if isEditing {
                     Button("Cancel") {
-                        withAnimation {
-                            editMode?.wrappedValue = .inactive
-                        }
+                        cancelEditing()
                     }
                 } else {
                     Button("Edit") {
-                        withAnimation {
-                            editMode?.wrappedValue = .active
-                        }
+                        beginEditing()
                     }
                 }
             }
 
             ToolbarItem(placement: .topBarTrailing) {
                 if isEditing {
-                    Button(action: primaryToolbarAction) {
+                    Button(action: saveEditing) {
                         Text("Save")
                     }
                     .buttonStyle(.glassProminent)
@@ -102,7 +107,7 @@ struct WorkoutDetailView: View {
                     .tint(.blue)
                     .disabled(!isWorkoutNameValid)
                 } else if !workout.exercises.isEmpty {
-                    Button(action: primaryToolbarAction) {
+                    Button(action: startWorkout) {
                         Text("Start")
                     }
                     .buttonStyle(.glassProminent)
@@ -187,6 +192,12 @@ struct WorkoutDetailView: View {
             }
             .padding(.bottom, 8)
         }
+        .onAppear {
+            // Keep draft in sync for the first render.
+            if draftWorkoutName.isEmpty {
+                draftWorkoutName = workout.name
+            }
+        }
     }
 
     private var activeConflictBinding: Binding<Bool> {
@@ -199,22 +210,41 @@ struct WorkoutDetailView: View {
         }
     }
 
+    private func beginEditing() {
+        originalWorkoutName = workout.name
+        draftWorkoutName = workout.name
+
+        withAnimation {
+            editMode?.wrappedValue = .active
+        }
+    }
+
+    private func cancelEditing() {
+        // Revert changes made during editing.
+        workout.name = originalWorkoutName
+        draftWorkoutName = originalWorkoutName
+
+        withAnimation {
+            editMode?.wrappedValue = .inactive
+        }
+    }
+
+    private func saveEditing() {
+        let trimmedName = draftWorkoutName.trimmingCharacters(in: .whitespacesAndNewlines)
+        workout.name = trimmedName
+        workout.updatedAt = .now
+
+        withAnimation {
+            editMode?.wrappedValue = .inactive
+        }
+    }
+
     private func startWorkout() {
         activeSessionManager.requestStart(
             workout: workout,
             preferences: preference,
             modelContext: modelContext
         )
-    }
-
-    private func primaryToolbarAction() {
-        if isEditing {
-            withAnimation {
-                editMode?.wrappedValue = .inactive
-            }
-        } else {
-            startWorkout()
-        }
     }
 
     private func deleteExercise(_ exercise: WorkoutExercise) {
@@ -240,18 +270,16 @@ struct WorkoutDetailView: View {
 private struct TemplateHeaderSection: View {
     @Bindable var workout: Workout
     let isEditing: Bool
+    @Binding var draftWorkoutName: String
 
     var body: some View {
         Section {
             GlassSurface() {
                 VStack(alignment: .leading, spacing: 12) {
                     if isEditing {
-                        TextField("Workout name", text: $workout.name)
+                        TextField("Workout name", text: $draftWorkoutName)
                             .font(.title2.weight(.semibold))
                             .textInputAutocapitalization(.words)
-                            .onChange(of: workout.name) { _, _ in
-                                workout.updatedAt = .now
-                            }
 
                         EditableTagChips(workout: workout)
                     } else {
